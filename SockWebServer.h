@@ -1,7 +1,35 @@
 /*
-   SockWebServer, a simple Arduino web/websocket server
-   Copyright 2016-2017 Ben Combee, Ran Talbott, Christopher Lee, Martin Lormes
-   Carlo Benedetti
+	SockWebServer, a simple Arduino web/websocket server
+	developed by Carlo Benedetti (2016)
+   
+	based on:
+	-	Webduino library originally developed and by Ben Combee, Ran Talbott, 
+		Christopher Lee, Martin Lormes, Francisco M Cuenca-Acuna
+	-	WebSocketServer 2012 version by Per Ejeklint.
+	
+	This library integrates onto a single HTTP port (usually 80) both the HTTP
+	server and the WEBSOCKET server when the 'upgrade' is requested.
+	The concurrent connections that this server is capable to mantain depends
+	by the hardware capabilities: W5100 chip shield allows up to 4 clients;
+	the W5500 one can support to up to 8 clients.
+
+	Permission is hereby granted, free of charge, to any person obtaining a copy
+	of this software and associated documentation files (the "Software"), to deal
+	in the Software without restriction, including without limitation the rights
+	to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+	copies of the Software, and to permit persons to whom the Software is
+	furnished to do so, subject to the following conditions:
+
+	The above copyright notice and this permission notice shall be included in
+	all copies or substantial portions of the Software.
+
+	THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+	IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+	FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+	AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+	LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+	OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+	THE SOFTWARE.
 */
 #define ethernet2_h
 #define WEBDUINO_SERIAL_DEBUGGING 3
