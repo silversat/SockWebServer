@@ -31,8 +31,19 @@
 	OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 	THE SOFTWARE.
 */
-#define ethernet2_h
+#define FISHINO_H
+//#define ethernet_h
+//#define ethernet2_h
+
 #define WEBDUINO_SERIAL_DEBUGGING 3
+
+#define DEBUG_WEBSOCKETS(...) Serial.printf( __VA_ARGS__ )
+
+#ifndef DEBUG_WEBSOCKETS
+	#define DEBUG_WEBSOCKETS(...)
+#endif
+
+
 
 #include <string.h>
 #include <stdlib.h>
@@ -109,50 +120,15 @@
 #define WEBDUINO_OUTPUT_BUFFER_SIZE 32
 #endif // WEBDUINO_OUTPUT_BUFFER_SIZE
 
-// add '#define WEBDUINO_FAVICON_DATA ""' to your application
-// before including WebServer.h to send a null file as the favicon.ico file
-// otherwise this defaults to a 16x16 px black diode on blue ground
-// (or include your own icon if you like)
-#ifndef WEBDUINO_FAVICON_DATA
-#define WEBDUINO_FAVICON_DATA { 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x10, \
-                                0x10, 0x02, 0x00, 0x01, 0x00, 0x01, 0x00, \
-                                0xb0, 0x00, 0x00, 0x00, 0x16, 0x00, 0x00, \
-                                0x00, 0x28, 0x00, 0x00, 0x00, 0x10, 0x00, \
-                                0x00, 0x00, 0x20, 0x00, 0x00, 0x00, 0x01, \
-                                0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, \
-                                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, \
-                                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, \
-                                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, \
-                                0x00, 0x00, 0x00, 0xff, 0x00, 0x00, 0x00, \
-                                0xff, 0xff, 0x00, 0x00, 0xff, 0xff, 0x00, \
-                                0x00, 0xff, 0xff, 0x00, 0x00, 0xcf, 0xbf, \
-                                0x00, 0x00, 0xc7, 0xbf, 0x00, 0x00, 0xc3, \
-                                0xbf, 0x00, 0x00, 0xc1, 0xbf, 0x00, 0x00, \
-                                0xc0, 0xbf, 0x00, 0x00, 0x00, 0x00, 0x00, \
-                                0x00, 0xc0, 0xbf, 0x00, 0x00, 0xc1, 0xbf, \
-                                0x00, 0x00, 0xc3, 0xbf, 0x00, 0x00, 0xc7, \
-                                0xbf, 0x00, 0x00, 0xcf, 0xbf, 0x00, 0x00, \
-                                0xff, 0xff, 0x00, 0x00, 0xff, 0xff, 0x00, \
-                                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, \
-                                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, \
-                                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, \
-                                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, \
-                                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, \
-                                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, \
-                                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, \
-                                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, \
-                                0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, \
-                                0x00, 0x00 }
-#endif // #ifndef WEBDUINO_FAVICON_DATA
-
 // add "#define WEBDUINO_SERIAL_DEBUGGING 1" to your application
 // before including WebServer.h to have incoming requests logged to
 // the serial port.
 #ifndef WEBDUINO_SERIAL_DEBUGGING
-#define WEBDUINO_SERIAL_DEBUGGING 0
+	#define WEBDUINO_SERIAL_DEBUGGING 0
 #endif
+
 #if WEBDUINO_SERIAL_DEBUGGING
-#include <HardwareSerial.h>
+	#include <HardwareSerial.h>
 #endif
 
 // declared in wiring.h
@@ -353,6 +329,8 @@ public:
 	// Close the current connection and flush ethernet buffers
 	void reset();
 	
+	void setFavicon( char *favicon, size_t flen);
+	
 private:
 
 #ifdef FISHINO_H
@@ -374,6 +352,9 @@ private:
     byte m_connectionCount;
 	//
 	
+	char *m_favicon;
+	size_t m_favicon_len;
+	
 	const char *m_urlPrefix;
 	unsigned char m_pushback[32];
 	unsigned char m_pushbackDepth;
@@ -381,11 +362,11 @@ private:
 	int m_contentLength;
 	char m_authCredentials[51];
 	bool m_readingContent;
-	char m_ws_upgrade[64];
-	char m_ws_host[64];
-	char m_ws_connection[64];
+	char m_ws_upgrade[32];
+	char m_ws_host[32];
+	char m_ws_connection[32];
 	int m_ws_version;
-	char m_ws_key[64];
+	char m_ws_key[32];
 
 	Command *m_failureCmd;
 	Command *m_defaultCmd;
@@ -440,7 +421,6 @@ public:
     int getClientIndex();
 
     // Disconnect user gracefully.
-    void resetStream();
     void disconnectStream();
 
 private:

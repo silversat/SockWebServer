@@ -2,7 +2,7 @@
 #include "sha1.h"
 #include "Base64.h"
 
-#define DEBUG 		1
+//#define DEBUG 		1
 #define MASK_LEN	4
 #define DATA_LEN	64
 
@@ -23,6 +23,8 @@ WebServer::WebServer(const char *urlPrefix, uint16_t port, byte maxConnections) 
 	m_server(port),
 	m_client(),
 	m_urlPrefix(urlPrefix),
+	m_favicon(NULL),
+	m_favicon_len(0),
 	m_pushbackDepth(0),
 	m_contentLength(0),
 	m_failureCmd(&defaultFailCmd),
@@ -68,15 +70,11 @@ void WebServer::processConnection( char *buff, int *bufflen ) {
 		m_readingContent = false;
 		buff[0] = 0x00;
 		ConnectionType requestType = INVALID;
-		#if WEBDUINO_SERIAL_DEBUGGING > 1
-			Serial << "\n*** checking request ***\n";
-		#endif
+		DEBUG_WEBSOCKETS("\n*** checking request ***\n");
 		
 		getRequest(requestType, buff, bufflen);
 		
-		#if WEBDUINO_SERIAL_DEBUGGING > 1
-			Serial << "*** requestType = " << (int)requestType << ", request = \"" << buff << "\" ***\n";
-		#endif
+		DEBUG_WEBSOCKETS("*** requestType: %d, request: '%s' ***\n", (int)requestType, buff);
 
 		// don't even look further at invalid requests.
 		// this is done to prevent Webduino from hanging
@@ -84,34 +82,14 @@ void WebServer::processConnection( char *buff, int *bufflen ) {
 		// - when someone contacts it through telnet rather than proper HTTP,
 		// - etc.
 		if(requestType != INVALID) {
-/*			
-Serial << "--- checking connection " << idx << CRLF;
-			if(idx >= 0) {										// but is no more connected
-Serial << "--- connection " << idx << " already upgraded" << CRLF;
-				if(m_connections[idx]->isConnected()) {
-Serial << "--- disconnecting" << CRLF;
-					m_connections[idx]->resetStream();
-					m_connectionCount--;
-					delete m_connections[idx];
-					m_connections[idx] = NULL;
-
-				}
-				Serial << CRLF;
-			}
-*/		
-			
 			processHeaders();
-			#if WEBDUINO_SERIAL_DEBUGGING > 1
-				Serial << "*** headers complete ***\n";
-			#endif
+			DEBUG_WEBSOCKETS("*** headers complete ***\n");
 			if (strcmp(buff, "/robots.txt") == 0) {
 				noRobots(requestType);
 			} else if (strcmp(buff, "/favicon.ico") == 0) {
 				favicon(requestType);
 			} else if(strcasecmp(m_ws_upgrade, "websocket") == 0) {
-				#if WEBDUINO_SERIAL_DEBUGGING > 1
-					Serial << "*** upgrading HTTP connection to WEBSOCKET ***\n";
-				#endif
+				DEBUG_WEBSOCKETS("*** upgrading HTTP connection to WEBSOCKET ***\n");
 				handleNewClients();
 			}
 		} else {
@@ -122,9 +100,7 @@ Serial << "--- disconnecting" << CRLF;
 			if(!dispatchCommand(requestType, buff + strlen(m_urlPrefix), (*bufflen) >= 0)) {
 				m_failureCmd(*this, requestType, buff, (*bufflen) >= 0);
 			}
-			#if WEBDUINO_SERIAL_DEBUGGING > 1
-				Serial << "*** stopping HTTP connection ***\n";
-			#endif
+			DEBUG_WEBSOCKETS("*** stopping HTTP connection ***\n");
 			flushBuf();
 			reset();
 		}
@@ -152,15 +128,11 @@ void WebServer::handleNewClients() {
 		}
 		m_connections[x] = new WebSocket(this, m_client, x);
         m_connectionCount++;
-		#ifdef DEBUG
-			Serial << F("Websocket client ") << x << F(" connected.\n");
-		#endif
+		DEBUG_WEBSOCKETS("Websocket client %d connected.\n", x);
 		return;
     }
     // No room!
-	#ifdef DEBUG
-		Serial.println(F("Cannot accept new websocket client, maxConnections reached!"));
-	#endif
+	DEBUG_WEBSOCKETS("Cannot accept new websocket client, maxConnections reached!");
 }
 
 void WebServer::handleClientData() {
@@ -369,19 +341,22 @@ void WebServer::defaultFailCmd(WebServer &server, WebServer::ConnectionType type
 }
 
 void WebServer::noRobots(ConnectionType type) {
-  httpSuccess("text/plain");
-  if (type != HEAD) {
-    P(allowNoneMsg) = "User-agent: *" CRLF "Disallow: /" CRLF;
-    printP(allowNoneMsg);
-  }
+	httpSuccess("text/plain");
+	if(type != HEAD) {
+		P(allowNoneMsg) = "User-agent: *" CRLF "Disallow: /" CRLF;
+		printP(allowNoneMsg);
+	}
 }
 
 void WebServer::favicon(ConnectionType type) {
-  httpSuccess("image/x-icon","Cache-Control: max-age=31536000\r\n");
-  if (type != HEAD) {
-    P(faviconIco) = WEBDUINO_FAVICON_DATA;
-    writeP(faviconIco, sizeof(faviconIco));
-  }
+	httpSuccess("image/x-icon","Cache-Control: max-age=31536000\r\n");
+	if(type != HEAD) {
+		if(m_favicon_len > 0) {
+			flushBuf(); //Flush any buffered output
+			m_client.write(m_favicon, m_favicon_len);
+			DEBUG_WEBSOCKETS("*** favicon sent: %d bytes ***\n", m_favicon_len);
+		}
+	}
 }
 
 void WebServer::httpUnauthorized() {
@@ -479,9 +454,7 @@ int WebServer::read() {
 			// the socket open because they assume HTTP keep-alive.
 			if (m_readingContent) {
 				if (m_contentLength == 0) {
-#if WEBDUINO_SERIAL_DEBUGGING > 1
-					Serial.println("\n*** End of content, terminating connection");
-#endif
+					DEBUG_WEBSOCKETS("\n*** End of content, terminating connection\n");
 					return -1;
 				}
 			}
@@ -495,22 +468,12 @@ int WebServer::read() {
 				if(m_readingContent) {
 					--m_contentLength;
 				}
-#if WEBDUINO_SERIAL_DEBUGGING > 4
-				if (ch == '\r')
-					Serial.print("<CR>");
-				else if (ch == '\n')
-					Serial.println("<LF>");
-				else
-					Serial.print((char)ch);
-#endif
 				return ch;
 			} else {
 				unsigned long now = millis();
 				if(now > timeoutTime) {
 					// connection timed out, destroy client, return EOF
-#if WEBDUINO_SERIAL_DEBUGGING
-					Serial.println("*** Connection timed out");
-#endif
+					DEBUG_WEBSOCKETS("*** Connection timed out\n");
 					reset();
 					return -1;
 				}
@@ -518,9 +481,7 @@ int WebServer::read() {
 		}
 
 		// connection lost, return EOF
-#if WEBDUINO_SERIAL_DEBUGGING
-		Serial.println("*** Connection lost");
-#endif
+		DEBUG_WEBSOCKETS("*** Connection lost\n");
 		return -1;
 	} else {
 		return m_pushback[--m_pushbackDepth];
@@ -581,27 +542,6 @@ bool WebServer::readInt(int &number) {
   if (negate)
     number = -number;
   return gotNumber;
-}
-
-void WebServer::readHeader(char *value, int valueLen) {
-	int ch;
-	memset(value, 0, valueLen);
-	--valueLen;
-
-	// absorb whitespace
-	do {
-		ch = read();
-	} while (ch == ' ' || ch == '\t');
-
-	// read rest of line
-	do {
-		if (valueLen > 1) {
-			*value++=ch;
-			--valueLen;
-		}
-		ch = read();
-	} while (ch != '\r');
-	push(ch);
 }
 
 bool WebServer::readPOSTparam(char *name, int nameLen, char *value, int valueLen) {
@@ -847,56 +787,42 @@ void WebServer::processHeaders() {
 	while(true) {
 		if(expect("Content-Length:")) {
 			readInt(m_contentLength);
-#if WEBDUINO_SERIAL_DEBUGGING > 1
-			Serial << "*** got Content-Length " << m_contentLength << " ***\n";
-#endif
+			DEBUG_WEBSOCKETS("*** got Content-Length %d ***\n", m_contentLength);
 			continue;
 		}
 		if(expect("Authorization:")) {
 			readHeader(m_authCredentials, 51);
-#if WEBDUINO_SERIAL_DEBUGGING > 1
-			Serial << "*** got Authorization: " << m_authCredentials << " ***\n";
-#endif
+			DEBUG_WEBSOCKETS("*** got Authorization: %s ***\n", m_authCredentials);
 			continue;
 		}
 		
 		if(expect("Upgrade:")) {
-			readHeader(m_ws_upgrade, 64);
-#if WEBDUINO_SERIAL_DEBUGGING > 1
-			Serial << "*** got Upgrade: " << m_ws_upgrade << " ***\n";
-#endif
+			readHeader(m_ws_upgrade, sizeof(m_ws_upgrade));
+			DEBUG_WEBSOCKETS("*** got Upgrade: %s, len: %d ***\n", m_ws_upgrade, sizeof(m_ws_upgrade));
 			continue;
 		}
 		
 		if(expect("Host:")) {
-			readHeader(m_ws_host, 64);
-#if WEBDUINO_SERIAL_DEBUGGING > 1
-			Serial << "*** got Host: " << m_ws_host << " ***\n";
-#endif
+			readHeader(m_ws_host, sizeof(m_ws_host));
+			DEBUG_WEBSOCKETS("*** got Host: %s, len: %d ***\n", m_ws_host, sizeof(m_ws_host));
 			continue;
 		}
 		
 		if(expect("Connection:")) {
-			readHeader(m_ws_connection, 64);
-#if WEBDUINO_SERIAL_DEBUGGING > 1
-			Serial << "*** got Connection: " << m_ws_connection << " ***\n";
-#endif
+			readHeader(m_ws_connection, sizeof(m_ws_connection));
+			DEBUG_WEBSOCKETS("*** got Connection: %s, len: %d ***\n", m_ws_connection, sizeof(m_ws_connection));
 			continue;
 		}
 		
 		if(expect("Sec-WebSocket-Version:")) {
 			readInt(m_ws_version);
-#if WEBDUINO_SERIAL_DEBUGGING > 1
-			Serial << "*** got Sec-WebSocket-Version: " << m_ws_version << " ***\n";
-#endif
+			DEBUG_WEBSOCKETS("*** got Sec-WebSocket-Version: %d ***\n", m_ws_version);
 			continue;
 		}
 		
 		if(expect("Sec-WebSocket-Key:")) {
-			readHeader(m_ws_key, 64);
-#if WEBDUINO_SERIAL_DEBUGGING > 1
-			Serial << "*** got Sec-WebSocket-Key: " << m_ws_key << " ***\n";
-#endif
+			readHeader(m_ws_key, sizeof(m_ws_key));
+			DEBUG_WEBSOCKETS("*** got Sec-WebSocket-Key: %s, len: %d ***\n", m_ws_key, sizeof(m_ws_key));
 			continue;
 		}
 		if(expect(CRLF CRLF)) {
@@ -908,6 +834,27 @@ void WebServer::processHeaders() {
 			return;
 		}
 	}
+}
+
+void WebServer::readHeader(char *value, int valueLen) {
+	int ch;
+	memset(value, 0, valueLen);
+	--valueLen;
+
+	// absorb whitespace
+	do {
+		ch = read();
+	} while (ch == ' ' || ch == '\t');
+
+	// read rest of line
+	do {
+		if (valueLen > 1) {
+			*value++=ch;
+			--valueLen;
+		}
+		ch = read();
+	} while (ch != '\r');
+	push(ch);
 }
 
 uint8_t WebServer::available() {
@@ -930,11 +877,16 @@ void WebServer::send( char *data, byte length ) {
 	m_server.write((uint8_t) 0x81); 			// Txt frame opcode
 	m_server.write((uint8_t) length); 			// Length of data
 	m_server.write((const uint8_t *)data, length);
-Serial << "server send: " << data << "\n";
 }
 
 byte WebServer::connectionCount() {
     return m_connectionCount;
+}
+
+void WebServer::setFavicon( char *favicon, size_t flen ) {
+	m_favicon_len = flen;
+	m_favicon = new char[m_favicon_len];
+	memcpy(m_favicon, favicon, m_favicon_len);
 }
 
 //===============================================================================
@@ -979,21 +931,12 @@ int WebSocket::getClientIndex() {
 	return index;
 }
 
-void WebSocket::resetStream() {
-	#ifdef DEBUG
-		Serial << F("Resetting client ") << index << CRLF;
-	#endif
+void WebSocket::disconnectStream() {
+	DEBUG_WEBSOCKETS("Disconnecting client %d\n", index);
     state = DISCONNECTED;
     if( m_server->onDisconnect ) {
         m_server->onDisconnect(*this);
 	}
-}
-
-void WebSocket::disconnectStream() {
-	resetStream();
-	#ifdef DEBUG
-		Serial << F("Disconnecting client ") << index << CRLF;
-	#endif
     client.flush();
     delay(1);
     client.stop();
@@ -1025,32 +968,16 @@ bool WebSocket::doHandshake() {
 		char buf[132];
 		snprintf_P( buf, sizeof(buf), PSTR("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: %s\r\n\r\n"), temp );
 		client.print( buf );
-		#if WEBDUINO_SERIAL_DEBUGGING > 1
-			Serial << "*** connection " << index << " upgraded to WEBSOCKET ***\n";
-		#endif
+		DEBUG_WEBSOCKETS("*** connection %d upgraded to WEBSOCKET ***\n", index);
 		ret = true;
     } else {
         // Nope, failed handshake. Disconnect
-		#ifdef DEBUG
-			Serial.print(F(" failed! Upgrade:"));
-			Serial.print( upgrade );
-			Serial.print(F(", Connection:"));
-			Serial.print( connection );
-			Serial.print(F(", Host:"));
-			Serial.print( host );
-			Serial.print(F(", Key:"));
-			Serial.print( key );
-			Serial.print(F(", Version:"));
-			Serial.print( version );
-			Serial.print(F(", Index:"));
-			Serial.println( index );
-		#endif
+		DEBUG_WEBSOCKETS(" failed! Upgrade: %s, Connection: %s, Host: %s, Key: %s, Version: %d, Index: %d", upgrade, connection, host, key, version, index);
     }
     return ret;
 }
 
 bool WebSocket::getFrame() {
-Serial << "===> entered getFrame()\n";
 	bool ret = false;
     byte bite;
     
@@ -1063,10 +990,7 @@ Serial << "===> entered getFrame()\n";
     bite = client.read();				// read second byte:  if masked (0x80) and data length (0x7F)
     frame.length = bite & 0x7f; 		// Length of payload
     if(frame.length > 64) {
-		#ifdef DEBUG
-			Serial.print(F("Too big frame to handle. Length: "));
-			Serial.println(frame.length);
-		#endif
+		DEBUG_WEBSOCKETS("Too big frame to handle. Length: %d", frame.length);
         client.write((uint8_t) 0x08);
         client.write((uint8_t) 0x02);
         client.write((uint8_t) 0x03);
@@ -1080,16 +1004,6 @@ Serial << "===> entered getFrame()\n";
         frame.mask[1] = client.read();
         frame.mask[2] = client.read();
         frame.mask[3] = client.read();
-		#ifdef DEBUG
-			Serial.print("getFrame() -> frame mask: ");
-			Serial.print(frame.mask[0],HEX);
-			Serial.print(" ");
-			Serial.print(frame.mask[1],HEX);
-			Serial.print(" ");
-			Serial.print(frame.mask[2],HEX);
-			Serial.print(" ");
-			Serial.println(frame.mask[3],HEX);
-		#endif	
     }
 
     // Clear any frame data that may have come previously
@@ -1100,14 +1014,6 @@ Serial << "===> entered getFrame()\n";
 		if(frame.isMasked) {
 			uint8_t c = client.read();
             frame.data[i] = c ^ frame.mask[i%4];		// 0, 1, 2, 3
-			#ifdef DEBUG
-				Serial.print(" ");
-				Serial.print(c,HEX);
-				Serial.print(" -> ");
-				Serial.print((uint8_t)frame.data[i],HEX);
-				Serial.print(" = ");
-				Serial.println((char)frame.data[i]);
-			#endif
         } else {
             frame.data[i] = client.read();
         }
@@ -1115,9 +1021,7 @@ Serial << "===> entered getFrame()\n";
     // Frame complete!
     if(!frame.isFinal) {
         // We don't handle fragments! Close and disconnect.
-		#ifdef DEBUG
-			Serial.println(F("Non-final frame, doesn't handle that."));
-		#endif
+		DEBUG_WEBSOCKETS("Non-final frame, doesn't handle that.\n");
         client.print((uint8_t) 0x08);
         client.write((uint8_t) 0x02);
         client.write((uint8_t) 0x03);
@@ -1136,24 +1040,19 @@ Serial << "===> entered getFrame()\n";
         case 0x08:
             // Close frame. Answer with close and terminate tcp connection
             // TODO: Receive all bytes the client might send before closing? No?
-			#ifdef DEBUG
-				Serial.println(F("Close frame received. Closing in answer."));
-			#endif
+			DEBUG_WEBSOCKETS("Close frame received. Closing in answer.\n");
             client.write((uint8_t) 0x08);
             break;
             
         default:
             // Unexpected. Ignore. Probably should blow up entire universe here, but who cares.
-			#ifdef DEBUG
-				Serial.println(F("Unhandled frame ignored."));
-			#endif
+			DEBUG_WEBSOCKETS("Unhandled frame ignored.\n");
             break;
 	}
     return ret;
 }
 
 bool WebSocket::send(char *data, byte length) {
-Serial << "client send: " << data << "\n";
 	if( state != CONNECTED ) {
 		return false;
 	}
