@@ -35,15 +35,10 @@
 //#define ethernet_h
 //#define ethernet2_h
 
-#define WEBDUINO_SERIAL_DEBUGGING 3
-
-#define DEBUG_WEBSOCKETS(...) Serial.printf( __VA_ARGS__ )
-
+//#define DEBUG_WEBSOCKETS(...) Serial.printf( __VA_ARGS__ )
 #ifndef DEBUG_WEBSOCKETS
 	#define DEBUG_WEBSOCKETS(...)
 #endif
-
-
 
 #include <string.h>
 #include <stdlib.h>
@@ -119,17 +114,6 @@
 #ifndef WEBDUINO_OUTPUT_BUFFER_SIZE
 #define WEBDUINO_OUTPUT_BUFFER_SIZE 32
 #endif // WEBDUINO_OUTPUT_BUFFER_SIZE
-
-// add "#define WEBDUINO_SERIAL_DEBUGGING 1" to your application
-// before including WebServer.h to have incoming requests logged to
-// the serial port.
-#ifndef WEBDUINO_SERIAL_DEBUGGING
-	#define WEBDUINO_SERIAL_DEBUGGING 0
-#endif
-
-#if WEBDUINO_SERIAL_DEBUGGING
-	#include <HardwareSerial.h>
-#endif
 
 // declared in wiring.h
 extern "C" unsigned long millis(void);
