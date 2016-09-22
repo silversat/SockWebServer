@@ -314,6 +314,8 @@ public:
 	void reset();
 	
 	void setFavicon( char *favicon, size_t flen);
+	void setPingTimeout( unsigned long interval,  unsigned long timeout );
+	void handlePing();
 	
 private:
 
@@ -326,11 +328,13 @@ private:
 #endif
 
     // websockets data
-    WebSocket **m_connections;		// Pointer array of clients:
+    WebSocket **m_connections;			// Pointer array of clients:
 	
 	void handleNewClients();
 	void handleClientData();
 	int getConnectionIndex();
+	void deleteConnection( byte idx );	// delete an indexed connection
+	
 
     int m_maxConnections;
     byte m_connectionCount;
@@ -342,6 +346,10 @@ private:
 	const char *m_urlPrefix;
 	unsigned char m_pushback[32];
 	unsigned char m_pushbackDepth;
+	unsigned long m_ping_interval;		// websocket ping-pong interval in mS
+	unsigned long m_ping_timeout;		// Websocket timeout in mS
+	unsigned long m_ping_millis;		// websocket current interval value in mS
+	bool m_ping_enabled;
 
 	int m_contentLength;
 	char m_authCredentials[51];
@@ -406,10 +414,14 @@ public:
 
     // Disconnect user gracefully.
     void disconnectStream();
+	
+	void resetPongMillis();
+	unsigned long getPongMillis();
 
 private:
-    WS_CLIENT client;
-	int	index;
+    WS_CLIENT m_client;
+	int	m_index;
+	
     enum State {DISCONNECTED, CONNECTED} state;
 
 	char *upgrade;
@@ -417,6 +429,10 @@ private:
 	char *connection;
 	char *key;
 	int version;
+	
+	// here is stored the current timer in order to close the connection if no pong
+	// is received by any client upon a ping message.
+	unsigned long m_pong_timer_millis;
 	
     // Discovers if the client's header is requesting an upgrade to a
     // websocket connection.

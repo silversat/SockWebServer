@@ -33,7 +33,8 @@ WebServer::WebServer(const char *urlPrefix, uint16_t port, byte maxConnections) 
 	m_urlPathCmd(NULL),
 	m_bufFill(0),
 	m_maxConnections(maxConnections),		// websockets max connections
-	m_connectionCount(0)					// websockets connections counter
+	m_connectionCount(0),					// websockets connections counter
+	m_ping_enabled(false)
 {
     m_connections = new WebSocket*[ m_maxConnections ];
 	for(byte x = 0; x < m_maxConnections; x++) {
@@ -53,8 +54,23 @@ void WebServer::begin() {
 void WebServer::loop() {
 	char request[WEBDUINO_DEFAULT_REQUEST_LENGTH];
 	int  request_len = WEBDUINO_DEFAULT_REQUEST_LENGTH;
+	
+	handlePing();
 	handleClientData();
 	processConnection(request, &request_len);
+}
+
+void WebServer::handlePing() {
+	if(m_ping_enabled) {
+		if(millis() - m_ping_millis > m_ping_interval) {	
+			m_ping_millis = millis();
+			if(m_connectionCount > 0) {
+				m_server.write((uint8_t) 0x89);		// PING frame opcode
+				m_server.write((uint8_t) 0x00);
+				DEBUG_WEBSOCKETS("global PING sent @ %lu\n", millis());
+			}
+		}
+	}
 }
 
 void WebServer::processConnection( char *buff, int *bufflen ) {
@@ -139,15 +155,29 @@ void WebServer::handleClientData() {
 	for(byte x = 0; x < m_maxConnections; x++) {			// First check existing connections:
 		if( m_connections[x] != NULL ) {
 			if( m_connections[x]->isConnected() ) {
-				m_connections[x]->listen();					// ===> ha fatto la listen()
+				if(m_ping_enabled) {
+					unsigned long sockMillis = m_connections[x]->getPongMillis();
+					if(sockMillis > m_ping_millis and (sockMillis - m_ping_millis) > m_ping_timeout) {
+						DEBUG_WEBSOCKETS("---> sockMillis: %lu, m_ping_millis: %lu, diff: %lu\n", sockMillis, m_ping_millis, (sockMillis-m_ping_millis));						
+						m_connections[x]->disconnectStream();
+						deleteConnection(x);
+						continue;
+					}
+				}
+				m_connections[x]->listen();
 			} else {
-				m_connectionCount--;
-				delete m_connections[x];
-				m_connections[x] = NULL;
+				deleteConnection(x);
 				continue;
 			}
 		}
 	}
+}
+ 
+void WebServer::deleteConnection( byte idx ) {
+	m_connectionCount--;
+	delete m_connections[idx];
+	m_connections[idx] = NULL;
+	DEBUG_WEBSOCKETS("client %d has been deleted\n", idx);
 }
 
 void WebServer::flushBuf() {
@@ -889,13 +919,23 @@ void WebServer::setFavicon( char *favicon, size_t flen ) {
 	memcpy(m_favicon, favicon, m_favicon_len);
 }
 
+void WebServer::setPingTimeout(unsigned long interval,  unsigned long timeout) {
+	m_ping_enabled = (interval > 0 and timeout > 0);
+	if(m_ping_enabled) {
+		m_ping_interval = interval;
+		m_ping_timeout = timeout;
+		m_ping_millis = millis();
+	}
+}
+
 //===============================================================================
 //								WEBSOCKETS CLASS
 //===============================================================================
 WebSocket::WebSocket( WebServer *server, WS_CLIENT cli, int idx ) :
     m_server(server),
-    client(cli),
-	index(idx)
+    m_client(cli),
+	m_index(idx),
+	m_pong_timer_millis(0)
 {
     if( doHandshake() ) {
         state = CONNECTED;
@@ -911,9 +951,17 @@ bool WebSocket::isConnected() {
     return (state == CONNECTED);
 }
 
+void WebSocket::resetPongMillis() {
+	m_pong_timer_millis = millis();
+}
+	
+unsigned long WebSocket::getPongMillis() {
+	return m_pong_timer_millis;
+}
+	
 void WebSocket::listen() {
-    if( client.connected() ) {
-		if( client.available() ) {
+    if( m_client.connected() ) {
+		if( m_client.available() ) {
 			if( !getFrame() ) {
 				disconnectStream();
 			}
@@ -924,22 +972,22 @@ void WebSocket::listen() {
 }
 
 WS_CLIENT WebSocket::getClient() {
-	return client;
+	return m_client;
 }
 
 int WebSocket::getClientIndex() {
-	return index;
+	return m_index;
 }
 
 void WebSocket::disconnectStream() {
-	DEBUG_WEBSOCKETS("Disconnecting client %d\n", index);
+	DEBUG_WEBSOCKETS("Disconnecting client %d\n", m_index);
     state = DISCONNECTED;
     if( m_server->onDisconnect ) {
         m_server->onDisconnect(*this);
 	}
-    client.flush();
+    m_client.flush();
     delay(1);
-    client.stop();
+    m_client.stop();
 }
 
 bool WebSocket::doHandshake() {
@@ -967,12 +1015,12 @@ bool WebSocket::doHandshake() {
         base64_encode(temp, (char*)hash, 20);
 		char buf[132];
 		snprintf_P( buf, sizeof(buf), PSTR("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: %s\r\n\r\n"), temp );
-		client.print( buf );
-		DEBUG_WEBSOCKETS("*** connection %d upgraded to WEBSOCKET ***\n", index);
+		m_client.print( buf );
+		DEBUG_WEBSOCKETS("*** connection %d upgraded to WEBSOCKET ***\n", m_index);
 		ret = true;
     } else {
         // Nope, failed handshake. Disconnect
-		DEBUG_WEBSOCKETS(" failed! Upgrade: %s, Connection: %s, Host: %s, Key: %s, Version: %d, Index: %d", upgrade, connection, host, key, version, index);
+		DEBUG_WEBSOCKETS(" failed! Upgrade: %s, Connection: %s, Host: %s, Key: %s, Version: %d, Index: %d", upgrade, connection, host, key, version, m_index);
     }
     return ret;
 }
@@ -982,28 +1030,28 @@ bool WebSocket::getFrame() {
     byte bite;
     
     // Get opcode
-    bite = client.read();				// read first char: final frame bit
-        
+    bite = m_client.read();				// read first char: final frame bit
+
     frame.opcode = bite & 0x0F; 		// Opcode
     frame.isFinal = bite & 0x80; 		// Final frame?
     // Determine length (only accept <= 64 for now)
-    bite = client.read();				// read second byte:  if masked (0x80) and data length (0x7F)
+    bite = m_client.read();				// read second byte:  if masked (0x80) and data length (0x7F)
     frame.length = bite & 0x7f; 		// Length of payload
     if(frame.length > 64) {
 		DEBUG_WEBSOCKETS("Too big frame to handle. Length: %d", frame.length);
-        client.write((uint8_t) 0x08);
-        client.write((uint8_t) 0x02);
-        client.write((uint8_t) 0x03);
-        client.write((uint8_t) 0xf1);
+        m_client.write((uint8_t) 0x08);
+        m_client.write((uint8_t) 0x02);
+        m_client.write((uint8_t) 0x03);
+        m_client.write((uint8_t) 0xf1);
         return ret;
     }
     // Client should always send mask, but check just to be sure
     frame.isMasked = bite & 0x80;
     if (frame.isMasked) {
-        frame.mask[0] = client.read();
-        frame.mask[1] = client.read();
-        frame.mask[2] = client.read();
-        frame.mask[3] = client.read();
+        frame.mask[0] = m_client.read();
+        frame.mask[1] = m_client.read();
+        frame.mask[2] = m_client.read();
+        frame.mask[3] = m_client.read();
     }
 
     // Clear any frame data that may have come previously
@@ -1012,23 +1060,23 @@ bool WebSocket::getFrame() {
     // Get message bytes and unmask them if necessary
     for(int i = 0; i < frame.length; i++) {				// 0...3
 		if(frame.isMasked) {
-			uint8_t c = client.read();
+			uint8_t c = m_client.read();
             frame.data[i] = c ^ frame.mask[i%4];		// 0, 1, 2, 3
         } else {
-            frame.data[i] = client.read();
+            frame.data[i] = m_client.read();
         }
     }
     // Frame complete!
     if(!frame.isFinal) {
         // We don't handle fragments! Close and disconnect.
 		DEBUG_WEBSOCKETS("Non-final frame, doesn't handle that.\n");
-        client.print((uint8_t) 0x08);
-        client.write((uint8_t) 0x02);
-        client.write((uint8_t) 0x03);
-        client.write((uint8_t) 0xf1);
+        m_client.write((uint8_t) 0x08);
+        m_client.write((uint8_t) 0x02);
+        m_client.write((uint8_t) 0x03);
+        m_client.write((uint8_t) 0xf1);
         return ret;
     }
-    switch (frame.opcode) {
+    switch(frame.opcode) {
         case 0x01: // Txt frame
             // Call the user provided function
             if( m_server->onData ) {
@@ -1041,8 +1089,22 @@ bool WebSocket::getFrame() {
             // Close frame. Answer with close and terminate tcp connection
             // TODO: Receive all bytes the client might send before closing? No?
 			DEBUG_WEBSOCKETS("Close frame received. Closing in answer.\n");
-            client.write((uint8_t) 0x08);
-            break;
+            m_client.write((uint8_t) 0x08);
+            m_client.write((uint8_t) 0x00);
+			break;
+
+        case 0x09:		// PING control frame
+			DEBUG_WEBSOCKETS("PING received by client %d, sending PONG...\n", m_index);
+            m_client.write((uint8_t) 0x8A);
+            m_client.write((uint8_t) 0x00);
+			ret = true;
+			break;
+		
+        case 0x0A:		// PONG control frame
+			DEBUG_WEBSOCKETS("PONG received by client %d @ %lu\n", m_index, millis());
+			resetPongMillis();
+			ret = true;
+			break;
             
         default:
             // Unexpected. Ignore. Probably should blow up entire universe here, but who cares.
@@ -1056,8 +1118,8 @@ bool WebSocket::send(char *data, byte length) {
 	if( state != CONNECTED ) {
 		return false;
 	}
-	client.write((uint8_t) 0x81); // Txt frame opcode
-	client.write((uint8_t) length); // Length of data
-	client.write( (const uint8_t *)data, length );
+	m_client.write((uint8_t) 0x81); 		// Txt frame opcode
+	m_client.write((uint8_t) length); 	// Length of data
+	m_client.write( (const uint8_t *)data, length );
 	return true;
 }
