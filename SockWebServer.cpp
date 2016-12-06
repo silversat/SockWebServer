@@ -2,7 +2,6 @@
 #include "sha1.h"
 #include "Base64.h"
 
-//#define DEBUG 		1
 #define MASK_LEN	4
 #define DATA_LEN	64
 
@@ -43,6 +42,8 @@ WebServer::WebServer(const char *urlPrefix, uint16_t port, byte maxConnections) 
     onConnect = NULL;
     onData = NULL;
     onDisconnect = NULL;
+    onPing = NULL;
+    onPong = NULL;
 }
 
 P(webServerHeader) = "Server: SockWebServer/" SOCKWEBSERVER_VERSION_STRING CRLF;
@@ -67,6 +68,9 @@ void WebServer::handlePing() {
 			if(m_connectionCount > 0) {
 				m_server.write((uint8_t) 0x89);		// PING frame opcode
 				m_server.write((uint8_t) 0x00);
+				if( onPing ) {
+					onPing();
+				}
 				DEBUG_WEBSOCKETS("global PING sent @ %lu\n", millis());
 			}
 		}
@@ -132,6 +136,18 @@ int WebServer::getConnectionIndex() {
 	return -1;
 }
 
+int WebServer::getSocketCount( char *protocol ) {
+	int ret = 0;
+	if(strlen(protocol) > 0) {
+		for(int idx = 0; idx < m_maxConnections; idx++) {
+			if(strcmp(m_connections[idx]->getProtocol(), protocol) == 0) {
+				ret++;
+			}
+		}
+	}
+	return ret;
+}
+
 void WebServer::handleNewClients() {
 	for(byte x = 0; x < m_maxConnections; x++) {		// check if new client is already recorded
 		if(m_connections[x]->getClient() == m_client) {
@@ -142,7 +158,7 @@ void WebServer::handleNewClients() {
         if( m_connections[x] ) {
             continue;
 		}
-		m_connections[x] = new WebSocket(this, m_client, x);
+		m_connections[x] = new WebSocket(this, m_client, x, m_ws_protocol);
         m_connectionCount++;
 		DEBUG_WEBSOCKETS("Websocket client %d connected.\n", x);
 		return;
@@ -192,6 +208,10 @@ void WebServer::reset() {
 	m_client.flush();
 	m_client.stop();
 }
+
+//-------------------------------------------------------------------
+//							WEB COMMANDS
+//-------------------------------------------------------------------
 
 void WebServer::setDefaultCommand(Command *cmd) {
   m_defaultCmd = cmd;
@@ -272,74 +292,74 @@ void WebServer::printf(const __FlashStringHelper *format, ... ) {
 #endif
 
 bool WebServer::dispatchCommand(ConnectionType requestType, char *verb, bool tail_complete) {
-  // if there is no URL, i.e. we have a prefix and it's requested without a
-  // trailing slash or if the URL is just the slash
-  if ((verb[0] == 0) || ((verb[0] == '/') && (verb[1] == 0))) {
-    m_defaultCmd(*this, requestType, (char*)"", tail_complete);
-    return true;
-  }
-  // if the URL is just a slash followed by a question mark
-  // we're looking at the default command with GET parameters passed
-  if ((verb[0] == '/') && (verb[1] == '?')) {
-    verb+=2; // skip over the "/?" part of the url
-    m_defaultCmd(*this, requestType, verb, tail_complete);
-    return true;
-  }
-  // We now know that the URL contains at least one character.  And,
-  // if the first character is a slash,  there's more after it.
-  if (verb[0] == '/') {
-    uint8_t i;
-    char *qm_loc;
-    uint16_t verb_len;
-    uint8_t qm_offset;
-    // Skip over the leading "/",  because it makes the code more
-    // efficient and easier to understand.
-    verb++;
-    // Look for a "?" separating the filename part of the URL from the
-    // parameters.  If it's not there, compare to the whole URL.
-    qm_loc = strchr(verb, '?');
-    verb_len = (qm_loc == NULL) ? strlen(verb) : (qm_loc - verb);
-    qm_offset = (qm_loc == NULL) ? 0 : 1;
-    for (i = 0; i < m_cmdCount; ++i) {
-      if ((verb_len == strlen(m_commands[i].verb)) && (strncmp(verb, m_commands[i].verb, verb_len) == 0)) {
-        // Skip over the "verb" part of the URL (and the question
-        // mark, if present) when passing it to the "action" routine
-        m_commands[i].cmd(*this, requestType,
-        verb + verb_len + qm_offset,
-        tail_complete);
-        return true;
-      }
-    }
-    // Check if UrlPathCommand is assigned.
-    if (m_urlPathCmd != NULL) {
-      // Initialize with null bytes, so number of parts can be determined.
-      char *url_path[WEBDUINO_URL_PATH_COMMAND_LENGTH] = {0};
-      uint8_t part = 0;
+	// if there is no URL, i.e. we have a prefix and it's requested without a
+	// trailing slash or if the URL is just the slash
+	if ((verb[0] == 0) || ((verb[0] == '/') && (verb[1] == 0))) {
+		m_defaultCmd(*this, requestType, (char*)"", tail_complete);
+		return true;
+	}
+	// if the URL is just a slash followed by a question mark
+	// we're looking at the default command with GET parameters passed
+	if ((verb[0] == '/') && (verb[1] == '?')) {
+		verb+=2; // skip over the "/?" part of the url
+		m_defaultCmd(*this, requestType, verb, tail_complete);
+		return true;
+	}
+	// We now know that the URL contains at least one character.  And,
+	// if the first character is a slash,  there's more after it.
+	if (verb[0] == '/') {
+		uint8_t i;
+		char *qm_loc;
+		uint16_t verb_len;
+		uint8_t qm_offset;
+		// Skip over the leading "/",  because it makes the code more
+		// efficient and easier to understand.
+		verb++;
+		// Look for a "?" separating the filename part of the URL from the
+		// parameters.  If it's not there, compare to the whole URL.
+		qm_loc = strchr(verb, '?');
+		verb_len = (qm_loc == NULL) ? strlen(verb) : (qm_loc - verb);
+		qm_offset = (qm_loc == NULL) ? 0 : 1;
+		for (i = 0; i < m_cmdCount; ++i) {
+			if ((verb_len == strlen(m_commands[i].verb)) && (strncmp(verb, m_commands[i].verb, verb_len) == 0)) {
+				// Skip over the "verb" part of the URL (and the question
+				// mark, if present) when passing it to the "action" routine
+				m_commands[i].cmd(*this, requestType,
+				verb + verb_len + qm_offset,
+				tail_complete);
+				return true;
+			}
+		}
+		// Check if UrlPathCommand is assigned.
+		if (m_urlPathCmd != NULL) {
+			// Initialize with null bytes, so number of parts can be determined.
+			char *url_path[WEBDUINO_URL_PATH_COMMAND_LENGTH] = {0};
+			uint8_t part = 0;
+	
+			// URL path should be terminated with null byte.
+			*(verb + verb_len) = 0;
 
-      // URL path should be terminated with null byte.
-      *(verb + verb_len) = 0;
-
-      // First URL path part is at the start of verb.
-      url_path[part++] = verb;
-      // Replace all slashes ('/') with a null byte so every part of the URL
-      // path is a seperate string. Add every char following a '/' as a new
-      // part of the URL, even if that char is a '/' (which will be replaced
-      // with a null byte).
-      for (char * p = verb; p < verb + verb_len; p++) {
-        if (*p == '/') {
-          *p = 0;
-          url_path[part++] = p + 1;
-          // Don't try to assign out of array bounds.
-          if (part == WEBDUINO_URL_PATH_COMMAND_LENGTH) {
-			  break;
-		  }
-        }
-      }
-      m_urlPathCmd(*this, requestType, url_path, verb + verb_len + qm_offset, tail_complete);
-      return true;
-    }
-  }
-  return false;
+			// First URL path part is at the start of verb.
+			url_path[part++] = verb;
+			// Replace all slashes ('/') with a null byte so every part of the URL
+			// path is a seperate string. Add every char following a '/' as a new
+			// part of the URL, even if that char is a '/' (which will be replaced
+			// with a null byte).
+			for (char * p = verb; p < verb + verb_len; p++) {
+				if (*p == '/') {
+					*p = 0;
+					url_path[part++] = p + 1;
+					// Don't try to assign out of array bounds.
+					if (part == WEBDUINO_URL_PATH_COMMAND_LENGTH) {
+						break;
+					}
+				}
+			}
+			m_urlPathCmd(*this, requestType, url_path, verb + verb_len + qm_offset, tail_complete);
+			return true;
+		}
+	}
+	return false;
 }
 
 bool WebServer::checkCredentials(const char authCredentials[45]) {
@@ -812,47 +832,54 @@ void WebServer::processHeaders() {
 	m_ws_host[0] = 0x00;
 	m_ws_connection[0] = 0x00;
 	m_ws_version = 0;
+	m_ws_protocol[0] = 0x00;
 	m_ws_key[0] = 0x00;
 
 	while(true) {
 		if(expect("Content-Length:")) {
 			readInt(m_contentLength);
-			DEBUG_WEBSOCKETS("*** got Content-Length %d ***\n", m_contentLength);
+			DEBUG_WEBSOCKETS(F("*** got Content-Length %d ***\n"), m_contentLength);
 			continue;
 		}
 		if(expect("Authorization:")) {
 			readHeader(m_authCredentials, 51);
-			DEBUG_WEBSOCKETS("*** got Authorization: %s ***\n", m_authCredentials);
+			DEBUG_WEBSOCKETS(F("*** got Authorization: %s ***\n"), m_authCredentials);
 			continue;
 		}
 		
 		if(expect("Upgrade:")) {
 			readHeader(m_ws_upgrade, sizeof(m_ws_upgrade));
-			DEBUG_WEBSOCKETS("*** got Upgrade: %s, len: %d ***\n", m_ws_upgrade, sizeof(m_ws_upgrade));
+			DEBUG_WEBSOCKETS(F("*** got Upgrade: %s, len: %d ***\n"), m_ws_upgrade, sizeof(m_ws_upgrade));
 			continue;
 		}
 		
 		if(expect("Host:")) {
 			readHeader(m_ws_host, sizeof(m_ws_host));
-			DEBUG_WEBSOCKETS("*** got Host: %s, len: %d ***\n", m_ws_host, sizeof(m_ws_host));
+			DEBUG_WEBSOCKETS(F("*** got Host: %s, len: %d ***\n"), m_ws_host, sizeof(m_ws_host));
 			continue;
 		}
 		
 		if(expect("Connection:")) {
 			readHeader(m_ws_connection, sizeof(m_ws_connection));
-			DEBUG_WEBSOCKETS("*** got Connection: %s, len: %d ***\n", m_ws_connection, sizeof(m_ws_connection));
+			DEBUG_WEBSOCKETS(F("*** got Connection: %s, len: %d ***\n"), m_ws_connection, sizeof(m_ws_connection));
 			continue;
 		}
 		
 		if(expect("Sec-WebSocket-Version:")) {
 			readInt(m_ws_version);
-			DEBUG_WEBSOCKETS("*** got Sec-WebSocket-Version: %d ***\n", m_ws_version);
+			DEBUG_WEBSOCKETS(F("*** got Sec-WebSocket-Version: %d ***\n"), m_ws_version);
+			continue;
+		}
+		
+		if(expect("Sec-WebSocket-Protocol:")) {
+			readHeader(m_ws_protocol, sizeof(m_ws_protocol));
+			DEBUG_WEBSOCKETS(F("*** got Sec-WebSocket-Protocol: %s, len: %d ***\n"), m_ws_protocol, sizeof(m_ws_protocol));
 			continue;
 		}
 		
 		if(expect("Sec-WebSocket-Key:")) {
 			readHeader(m_ws_key, sizeof(m_ws_key));
-			DEBUG_WEBSOCKETS("*** got Sec-WebSocket-Key: %s, len: %d ***\n", m_ws_key, sizeof(m_ws_key));
+			DEBUG_WEBSOCKETS(F("*** got Sec-WebSocket-Key: %s, len: %d ***\n"), m_ws_key, sizeof(m_ws_key));
 			continue;
 		}
 		if(expect(CRLF CRLF)) {
@@ -891,18 +918,6 @@ uint8_t WebServer::available() {
   return m_server.available();
 }
 
-void WebServer::registerConnectCallback(Callback *callback) {
-    onConnect = callback;
-}
-
-void WebServer::registerDataCallback(DataCallback *callback) {
-    onData = callback;
-}
-
-void WebServer::registerDisconnectCallback(Callback *callback) {
-    onDisconnect = callback;
-}
-
 void WebServer::send( char *data, byte length ) {
 	m_server.write((uint8_t) 0x81); 			// Txt frame opcode
 	m_server.write((uint8_t) length); 			// Length of data
@@ -928,13 +943,38 @@ void WebServer::setPingTimeout(unsigned long interval,  unsigned long timeout) {
 	}
 }
 
+//-------------------------------------------------------------------
+//					CALL-BACK REGISTER FUNCTIONS
+//-------------------------------------------------------------------
+
+void WebServer::registerConnectCallback(Callback *callback) {
+    onConnect = callback;
+}
+
+void WebServer::registerDataCallback(DataCallback *callback) {
+    onData = callback;
+}
+
+void WebServer::registerDisconnectCallback(Callback *callback) {
+    onDisconnect = callback;
+}
+
+void WebServer::registerPingCallback(VoidCallback *callback) {
+    onPing = callback;
+}
+
+void WebServer::registerPongCallback(Callback *callback) {
+    onPong = callback;
+}
+
 //===============================================================================
 //								WEBSOCKETS CLASS
 //===============================================================================
-WebSocket::WebSocket( WebServer *server, WS_CLIENT cli, int idx ) :
+WebSocket::WebSocket( WebServer* server, WS_CLIENT cli, int idx, char* protocol ) :
     m_server(server),
     m_client(cli),
 	m_index(idx),
+	m_protocol(protocol),
 	m_pong_timer_millis(0)
 {
     if( doHandshake() ) {
@@ -952,6 +992,9 @@ bool WebSocket::isConnected() {
 }
 
 void WebSocket::resetPongMillis() {
+	if( m_server->onPong ) {
+		m_server->onPong(*this);
+	}
 	m_pong_timer_millis = millis();
 }
 	
@@ -973,6 +1016,10 @@ void WebSocket::listen() {
 
 WS_CLIENT WebSocket::getClient() {
 	return m_client;
+}
+
+char* WebSocket::getProtocol() {
+	return m_protocol;
 }
 
 int WebSocket::getClientIndex() {
@@ -1013,8 +1060,12 @@ bool WebSocket::doHandshake() {
         Sha1.print(key);
         uint8_t *hash = Sha1.result();
         base64_encode(temp, (char*)hash, 20);
-		char buf[132];
-		snprintf_P( buf, sizeof(buf), PSTR("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: %s\r\n\r\n"), temp );
+		char buf[256];
+		if(strcmp(m_protocol, "") == 0) {
+			snprintf_P( buf, sizeof(buf), PSTR("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: %s\r\n\r\n"), temp );
+		} else {
+			snprintf_P( buf, sizeof(buf), PSTR("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: %s\r\nSec-WebSocket-Protocol: %s\r\n\r\n"), temp, m_protocol );
+		}
 		m_client.print( buf );
 		DEBUG_WEBSOCKETS("*** connection %d upgraded to WEBSOCKET ***\n", m_index);
 		ret = true;

@@ -31,9 +31,9 @@
 	OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 	THE SOFTWARE.
 */
-#define FISHINO_H
-//#define ethernet_h
-//#define ethernet2_h
+#define _fishino
+//#define _ethernet
+//#define _ethernet2
 
 //#define DEBUG_WEBSOCKETS(...) Serial.printf( __VA_ARGS__ )
 #ifndef DEBUG_WEBSOCKETS
@@ -44,13 +44,13 @@
 #include <stdlib.h>
 #include <Streaming.h>
 
-#if defined FISHINO_H
+#if defined _fishino
 	#include <Fishino.h>
 	#include <FishinoClient.h>
 	#include <FishinoServer.h>
 	#define WS_CLIENT	FishinoClient
 	#define WS_SERVER	FishinoServer
-#elif defined ethernet2_h
+#elif defined _ethernet2
 	#include <Ethernet2.h>
 	#include <EthernetClient.h>
 	#include <EthernetServer.h>
@@ -144,7 +144,7 @@ enum URLPARAM_RESULT {	URLPARAM_OK,
 						URLPARAM_VALUE_OFLO,
 						URLPARAM_BOTH_OFLO,
 						URLPARAM_EOS         // No params left
-				};
+					};
 
 class WebSocket;
 class WebServer: public Print {
@@ -173,12 +173,15 @@ public:
     // Callback functions definition.
     typedef void DataCallback(WebSocket &socket, char *socketString, byte frameLength);
     typedef void Callback(WebSocket &socket);
-    
+    typedef void VoidCallback();
+
     // Callbacks
     void registerDataCallback(DataCallback *callback);
     void registerConnectCallback(Callback *callback);
     void registerDisconnectCallback(Callback *callback);
- 
+    void registerPingCallback(VoidCallback *callback);
+    void registerPongCallback(Callback *callback);
+
     // Main listener for incoming data. Should be called from the loop.
     void listen();
 
@@ -266,8 +269,7 @@ public:
 	//
 	// returns 0 if everything weent okay,  non-zero if not
 	// (see the typedef for codes)
-	URLPARAM_RESULT nextURLparam(char **tail, char *name, int nameLen,
-							   char *value, int valueLen);
+	URLPARAM_RESULT nextURLparam(char **tail, char *name, int nameLen, char *value, int valueLen);
 
 	// compare string against credentials in current request
 	//
@@ -292,8 +294,7 @@ public:
 	// output standard headers indicating "200 Success".  You can change the
 	// type of the data you're outputting or also add extra headers like
 	// "Refresh: 1".  Extra headers should each be terminated with CRLF.
-	void httpSuccess(const char *contentType = "text/html; charset=utf-8",
-				   const char *extraHeaders = NULL);
+	void httpSuccess(const char *contentType = "text/html; charset=utf-8", const char *extraHeaders = NULL);
 
 	// used with POST to output a redirect to another URL.  This is
 	// preferable to outputting HTML from a post because you can then
@@ -316,6 +317,7 @@ public:
 	void setFavicon( char *favicon, size_t flen);
 	void setPingTimeout( unsigned long interval,  unsigned long timeout );
 	void handlePing();
+	int getSocketCount( char *protocol );
 	
 private:
 
@@ -357,6 +359,7 @@ private:
 	char m_ws_upgrade[32];
 	char m_ws_host[32];
 	char m_ws_connection[32];
+	char m_ws_protocol[32];
 	int m_ws_version;
 	char m_ws_key[32];
 
@@ -387,6 +390,8 @@ protected:
     DataCallback *onData;
     Callback *onConnect;
     Callback *onDisconnect;
+    VoidCallback *onPing;
+    Callback *onPong;
 
 };
 
@@ -395,7 +400,7 @@ class WebSocket {
 
 public:
     // Constructor.
-    WebSocket( WebServer *server, WS_CLIENT cli, int idx );
+    WebSocket( WebServer *server, WS_CLIENT cli, int idx, char* protocol );
 
     // Are we connected?
     bool isConnected();
@@ -409,6 +414,9 @@ public:
 	// Return client object
     WS_CLIENT getClient();
 	
+	// Return socket sub-protocol in use
+	char* getProtocol();
+	
 	// Return client index
     int getClientIndex();
 
@@ -420,15 +428,15 @@ public:
 
 private:
     WS_CLIENT m_client;
-	int	m_index;
-	
+	int		m_index;
+	char* 	m_protocol;
     enum State {DISCONNECTED, CONNECTED} state;
 
-	char *upgrade;
-	char *host;
-	char *connection;
-	char *key;
-	int version;
+	char*	upgrade;
+	char*	host;
+	char*	connection;
+	char*	key;
+	int 	version;
 	
 	// here is stored the current timer in order to close the connection if no pong
 	// is received by any client upon a ping message.
