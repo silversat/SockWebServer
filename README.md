@@ -15,3 +15,4 @@ you need to include these libs in your libraries directory:
 
 22-09-2016: added ping-pong opcode handle in order to keep timed-out connections active. this is usefull
 	for those arduino cards like fishino serie that drop connections on inactivity timeout.
+26-01-2017: bug fixes.
