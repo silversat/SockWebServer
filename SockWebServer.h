@@ -31,8 +31,8 @@
 	OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 	THE SOFTWARE.
 */
-#define _fishino
-//#define _ethernet
+//#define _fishino
+#define _ethernet
 //#define _ethernet2
 
 //#define DEBUG_WEBSOCKETS(...) Serial.printf( __VA_ARGS__ )
@@ -77,42 +77,41 @@
 // standard END-OF-LINE marker in HTTP
 #define CRLF "\r\n"
 
-// If processConnection is called without a buffer, it allocates one
-// of 32 bytes
+// If processConnection is called without a buffer, it allocates one of 64 bytes
 #define WEBDUINO_DEFAULT_REQUEST_LENGTH 64
 
 // How long to wait before considering a connection as dead when
 // reading the HTTP request.  Used to avoid DOS attacks.
 #ifndef WEBDUINO_READ_TIMEOUT_IN_MS
-#define WEBDUINO_READ_TIMEOUT_IN_MS 1000
+	#define WEBDUINO_READ_TIMEOUT_IN_MS 1000
 #endif
 
 #ifndef WEBDUINO_COMMANDS_COUNT
-#define WEBDUINO_COMMANDS_COUNT 8
+	#define WEBDUINO_COMMANDS_COUNT 8
 #endif
 
 #ifndef WEBDUINO_URL_PATH_COMMAND_LENGTH
-#define WEBDUINO_URL_PATH_COMMAND_LENGTH 8
+	#define WEBDUINO_URL_PATH_COMMAND_LENGTH 8
 #endif
 
 #ifndef WEBDUINO_FAIL_MESSAGE
-#define WEBDUINO_FAIL_MESSAGE "<h1>EPIC FAIL</h1>"
+	#define WEBDUINO_FAIL_MESSAGE "<h1>EPIC FAIL</h1>"
 #endif
 
 #ifndef WEBDUINO_AUTH_REALM
-#define WEBDUINO_AUTH_REALM "Webduino"
-#endif // #ifndef WEBDUINO_AUTH_REALM
+	#define WEBDUINO_AUTH_REALM "SockWebServer"
+#endif // WEBDUINO_AUTH_REALM
 
 #ifndef WEBDUINO_AUTH_MESSAGE
-#define WEBDUINO_AUTH_MESSAGE "<h1>401 Unauthorized</h1>"
-#endif // #ifndef WEBDUINO_AUTH_MESSAGE
+	#define WEBDUINO_AUTH_MESSAGE "<h1>401 Unauthorized</h1>"
+#endif // WEBDUINO_AUTH_MESSAGE
 
 #ifndef WEBDUINO_SERVER_ERROR_MESSAGE
-#define WEBDUINO_SERVER_ERROR_MESSAGE "<h1>500 Internal Server Error</h1>"
+	#define WEBDUINO_SERVER_ERROR_MESSAGE "<h1>500 Internal Server Error</h1>"
 #endif // WEBDUINO_SERVER_ERROR_MESSAGE
 
 #ifndef WEBDUINO_OUTPUT_BUFFER_SIZE
-#define WEBDUINO_OUTPUT_BUFFER_SIZE 32
+	#define WEBDUINO_OUTPUT_BUFFER_SIZE 32
 #endif // WEBDUINO_OUTPUT_BUFFER_SIZE
 
 // declared in wiring.h
@@ -316,12 +315,11 @@ public:
 	
 	void setFavicon( char *favicon, size_t flen);
 	void setPingTimeout( unsigned long interval,  unsigned long timeout );
-	void handlePing();
 	int getSocketCount( char *protocol );
 	
 private:
 
-#ifdef FISHINO_H
+#ifdef _fishino
 	FishinoServer m_server;
 	FishinoClient m_client;
 #else
@@ -332,8 +330,9 @@ private:
     // websockets data
     WebSocket **m_connections;			// Pointer array of clients:
 	
-	void handleNewClients();
+	uint8_t handleNewClients();
 	void handleClientData();
+	void handlePing();
 	int getConnectionIndex();
 	void deleteConnection( byte idx );	// delete an indexed connection
 	

@@ -1,6 +1,6 @@
 #include <SockWebServer.h>
-#include "sha1.h"
-#include "Base64.h"
+#include <sha1.h>
+#include <Base64.h>
 
 #define MASK_LEN	4
 #define DATA_LEN	64
@@ -71,7 +71,7 @@ void WebServer::handlePing() {
 				if( onPing ) {
 					onPing();
 				}
-				DEBUG_WEBSOCKETS("global PING sent @ %lu\n", millis());
+				DEBUG_WEBSOCKETS(F("global PING sent @ %lu\n"), millis());
 			}
 		}
 	}
@@ -85,16 +85,16 @@ void WebServer::processConnection( char *buff, int *bufflen ) {
 	if(idx >= 0) {
 		return;
 	}
-	
+
 	if(m_client) {
 		m_readingContent = false;
 		buff[0] = 0x00;
 		ConnectionType requestType = INVALID;
-		DEBUG_WEBSOCKETS("\n*** checking request ***\n");
+		DEBUG_WEBSOCKETS(F("\n*** checking request ***\n"));
 		
 		getRequest(requestType, buff, bufflen);
 		
-		DEBUG_WEBSOCKETS("*** requestType: %d, request: '%s' ***\n", (int)requestType, buff);
+		DEBUG_WEBSOCKETS(F("*** requestType: %d, request: '%s' ***\n"), (int)requestType, buff);
 
 		// don't even look further at invalid requests.
 		// this is done to prevent Webduino from hanging
@@ -103,24 +103,26 @@ void WebServer::processConnection( char *buff, int *bufflen ) {
 		// - etc.
 		if(requestType != INVALID) {
 			processHeaders();
-			DEBUG_WEBSOCKETS("*** headers complete ***\n");
+			DEBUG_WEBSOCKETS(F("*** headers complete ***\n"));
 			if (strcmp(buff, "/robots.txt") == 0) {
 				noRobots(requestType);
 			} else if (strcmp(buff, "/favicon.ico") == 0) {
 				favicon(requestType);
 			} else if(strcasecmp(m_ws_upgrade, "websocket") == 0) {
-				DEBUG_WEBSOCKETS("*** upgrading HTTP connection to WEBSOCKET ***\n");
-				handleNewClients();
+				DEBUG_WEBSOCKETS(F("*** upgrading HTTP connection to WEBSOCKET ***\n"));
+				idx = handleNewClients();
 			}
 		} else {
 			m_failureCmd(*this, requestType, buff, (*bufflen) >= 0);
 		}
 		
-		if(getConnectionIndex() < 0) {
+//		DEBUG_WEBSOCKETS(F("getConnectionIndex: %d\n"), idx);
+		if(idx < 0) {
+//		if(getConnectionIndex() < 0) {
 			if(!dispatchCommand(requestType, buff + strlen(m_urlPrefix), (*bufflen) >= 0)) {
 				m_failureCmd(*this, requestType, buff, (*bufflen) >= 0);
 			}
-			DEBUG_WEBSOCKETS("*** stopping HTTP connection ***\n");
+			DEBUG_WEBSOCKETS(F("*** stopping HTTP connection ***\n"));
 			flushBuf();
 			reset();
 		}
@@ -148,23 +150,24 @@ int WebServer::getSocketCount( char *protocol ) {
 	return ret;
 }
 
-void WebServer::handleNewClients() {
-	for(byte x = 0; x < m_maxConnections; x++) {		// check if new client is already recorded
+uint8_t WebServer::handleNewClients() {
+	for(uint8_t x = 0; x < m_maxConnections; x++) {			// check if new client is already recorded
 		if(m_connections[x]->getClient() == m_client) {
-			return;
+			return -1;
 		}
 	}
-    for( byte x = 0; x < m_maxConnections; x++ ) {		// It's a new client: Find a slot:
+    for( uint8_t x = 0; x < m_maxConnections; x++ ) {		// It's a new client: Find a slot:
         if( m_connections[x] ) {
             continue;
 		}
 		m_connections[x] = new WebSocket(this, m_client, x, m_ws_protocol);
         m_connectionCount++;
-		DEBUG_WEBSOCKETS("Websocket client %d connected.\n", x);
-		return;
+		DEBUG_WEBSOCKETS(F("Websocket client %d connected.\n"), x);
+		return x;
     }
     // No room!
-	DEBUG_WEBSOCKETS("Cannot accept new websocket client, maxConnections reached!");
+	DEBUG_WEBSOCKETS(F("Cannot accept new websocket client, maxConnections reached!"));
+	return -1;
 }
 
 void WebServer::handleClientData() {
@@ -174,7 +177,7 @@ void WebServer::handleClientData() {
 				if(m_ping_enabled) {
 					unsigned long sockMillis = m_connections[x]->getPongMillis();
 					if(sockMillis > m_ping_millis and (sockMillis - m_ping_millis) > m_ping_timeout) {
-						DEBUG_WEBSOCKETS("---> sockMillis: %lu, m_ping_millis: %lu, diff: %lu\n", sockMillis, m_ping_millis, (sockMillis-m_ping_millis));						
+						DEBUG_WEBSOCKETS(F("---> sockMillis: %lu, m_ping_millis: %lu, diff: %lu\n"), sockMillis, m_ping_millis, (sockMillis-m_ping_millis));						
 						m_connections[x]->disconnectStream();
 						deleteConnection(x);
 						continue;
@@ -1028,13 +1031,16 @@ int WebSocket::getClientIndex() {
 
 void WebSocket::disconnectStream() {
 	DEBUG_WEBSOCKETS("Disconnecting client %d\n", m_index);
+	while(m_client.connected()) {
+		m_client.flush();
+		m_client.stop();
+		delay(10);				// original value: 1
+	}
+	m_client = NULL;
     state = DISCONNECTED;
     if( m_server->onDisconnect ) {
         m_server->onDisconnect(*this);
 	}
-    m_client.flush();
-    delay(1);
-    m_client.stop();
 }
 
 bool WebSocket::doHandshake() {
@@ -1061,11 +1067,15 @@ bool WebSocket::doHandshake() {
         uint8_t *hash = Sha1.result();
         base64_encode(temp, (char*)hash, 20);
 		char buf[256];
-		if(strcmp(m_protocol, "") == 0) {
-			snprintf_P( buf, sizeof(buf), PSTR("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: %s\r\n\r\n"), temp );
-		} else {
-			snprintf_P( buf, sizeof(buf), PSTR("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: %s\r\nSec-WebSocket-Protocol: %s\r\n\r\n"), temp, m_protocol );
+
+		strcpy_P(buf, PSTR("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: "));
+		strcat(buf, temp);
+		if(strcmp(m_protocol, "") != 0) {
+			strcat_P( buf, PSTR("\r\nSec-WebSocket-Protocol: "));
+			strcat( buf, m_protocol );
 		}
+		strcat_P(buf, PSTR("\r\n\r\n"));
+
 		m_client.print( buf );
 		DEBUG_WEBSOCKETS("*** connection %d upgraded to WEBSOCKET ***\n", m_index);
 		ret = true;
