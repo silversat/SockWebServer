@@ -1,6 +1,6 @@
 /*
 	SockWebServer, a simple Arduino web/websocket server
-	developed by Carlo Benedetti (2016)
+	developed by Carlo Benedetti (2017)
    
 	based on:
 	-	Webduino library originally developed and by Ben Combee, Ran Talbott, 
@@ -31,13 +31,21 @@
 	OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 	THE SOFTWARE.
 */
+
+#ifndef SOCKWEBSERVER_H_
+#define SOCKWEBSERVER_H_
+
 //#define _fishino
+//#define _uipethernet
 #define _ethernet
 //#define _ethernet2
 
-//#define DEBUG_WEBSOCKETS(...) Serial.printf( __VA_ARGS__ )
+#define DEBUG_SERIAL	Serial		// SerialUSB, Serial, Serial1...
+//#define DEBUG_WEBSOCKETS(...) DEBUG_SERIAL.printf( __VA_ARGS__ )
 #ifndef DEBUG_WEBSOCKETS
 	#define DEBUG_WEBSOCKETS(...)
+#else
+	#define DEBUG_ENABLED
 #endif
 
 #include <string.h>
@@ -46,33 +54,40 @@
 
 #if defined _fishino
 	#include <Fishino.h>
-	#include <FishinoClient.h>
-	#include <FishinoServer.h>
 	#define WS_CLIENT	FishinoClient
 	#define WS_SERVER	FishinoServer
+	#define MAX_CONNS	4
+#elif defined _uipethernet
+	#include <UIPEthernet.h>
+	#define WS_CLIENT	UIPClient
+	#define WS_SERVER	UIPServer
+	#define MAX_CONNS	8
 #elif defined _ethernet2
 	#include <Ethernet2.h>
-	#include <EthernetClient.h>
-	#include <EthernetServer.h>
 	#define WS_CLIENT	EthernetClient
 	#define WS_SERVER	EthernetServer
-#else	
+	#define MAX_CONNS	8
+	#ifdef DEBUG_ENABLED
+		#define W5xxx	w5500
+	#endif
+#elif defined _ethernet
 	#include <Ethernet.h>
-	#include <EthernetClient.h>
-	#include <EthernetServer.h>
 	#define WS_CLIENT	EthernetClient
 	#define WS_SERVER	EthernetServer
+	#define MAX_CONNS	4
+	#ifdef DEBUG_ENABLED
+		#define W5xxx	W5100
+	#endif
+#else	
+	#error UNDEFINED NET INTERFACE
 #endif
-
-#ifndef SOCKWEBSERVER_H_
-#define SOCKWEBSERVER_H_
 
 /********************************************************************
  * CONFIGURATION
  ********************************************************************/
 
-#define SOCKWEBSERVER_VERSION 0001
-#define SOCKWEBSERVER_VERSION_STRING "0.1"
+#define SOCKWEBSERVER_VERSION 0002
+#define SOCKWEBSERVER_VERSION_STRING "0.2"
 
 // standard END-OF-LINE marker in HTTP
 #define CRLF "\r\n"
@@ -87,7 +102,7 @@
 #endif
 
 #ifndef WEBDUINO_COMMANDS_COUNT
-	#define WEBDUINO_COMMANDS_COUNT 8
+	#define WEBDUINO_COMMANDS_COUNT 12
 #endif
 
 #ifndef WEBDUINO_URL_PATH_COMMAND_LENGTH
@@ -130,8 +145,27 @@ extern "C" unsigned long millis(void);
 #ifdef _VARIANT_ARDUINO_DUE_X_
 #define pgm_read_byte(ptr) (unsigned char)(* ptr)
 #endif
+
 /********************************************************************
- * DECLARATIONS
+ * 	P-MESSAGES DECLARATIONS
+ ********************************************************************/
+P(failMsg1) = "HTTP/1.0 400 Bad Request" CRLF;
+P(failMsg2) = "Content-Type: text/html" CRLF CRLF WEBDUINO_FAIL_MESSAGE;
+P(unauthMsg1) = "HTTP/1.0 401 Authorization Required" CRLF;
+P(unauthMsg2) = "Content-Type: text/html" CRLF "WWW-Authenticate: Basic realm=\"" WEBDUINO_AUTH_REALM "\"" CRLF CRLF WEBDUINO_AUTH_MESSAGE;
+P(webServerHeader) = "Server: SockWebServer/" SOCKWEBSERVER_VERSION_STRING CRLF;
+P(allowNoneMsg) = "User-agent: *" CRLF "Disallow: /" CRLF;
+P(servErrMsg1) = "HTTP/1.0 500 Internal Server Error" CRLF;
+P(servErrMsg2) = "Content-Type: text/html" CRLF CRLF WEBDUINO_SERVER_ERROR_MESSAGE;
+P(noContentMsg1) = "HTTP/1.0 204 NO CONTENT" CRLF;
+P(noContentMsg2) = CRLF CRLF;
+P(successMsg1) = "HTTP/1.0 200 OK" CRLF;
+P(successMsg2) = "Access-Control-Allow-Origin: *" CRLF "Content-Type: ";
+P(seeOtherMsg1) = "HTTP/1.0 303 See Other" CRLF;
+P(seeOtherMsg2) = "Location: ";
+
+/********************************************************************
+ * 	DECLARATIONS
  ********************************************************************/
 
 /* Return codes from nextURLparam.  NOTE: URLPARAM_EOS is returned
@@ -153,21 +187,17 @@ public:
 
 	enum CLIENT_STATUS	{ CONNECTION_FAILED, ALREADY_CONNECTED, SUCCESSFULLY_CONNECTED };
 	
-	// any commands registered with the web server have to follow
-	// this prototype.
-	// url_tail contains the part of the URL that wasn't matched against
-	//          the registered command table.
-	// tail_complete is true if the complete URL fit in url_tail,  false if
-	//          part of it was lost because the buffer was too small.
+	// any commands registered with the web server have to follow this prototype:
+	// - url_tail contains the part of the URL that wasn't matched against the registered command table.
+	// - tail_complete is true if the complete URL fit in url_tail,  false if part of it was lost because the buffer was too small.
 	typedef void Command(WebServer &server, ConnectionType type, char *url_tail, bool tail_complete);
 
-	// Prototype for the optional function which consumes the URL path itself.
-	// url_path contains pointers to the seperate parts of the URL path where '/'
-	//          was used as the delimiter.
+	// Prototype for the optional function which consumes the URL path itself:
+	// - url_path contains pointers to the seperate parts of the URL path where '/' was used as the delimiter.
 	typedef void UrlPathCommand(WebServer &server, ConnectionType type, char **url_path, char *url_tail, bool tail_complete);
 
 	// constructor for webserver object
-	WebServer(const char *urlPrefix = "", uint16_t port = 80, byte maxConnections = 4);
+	WebServer(const char *urlPrefix = "", uint16_t port = 80, byte maxConnections = MAX_CONNS);
 
     // Callback functions definition.
     typedef void DataCallback(WebSocket &socket, char *socketString, byte frameLength);
@@ -193,16 +223,14 @@ public:
 	// start listening for connections
 	void begin();
 
-	// check for an incoming connection, and if it exists, process it
-	// by reading its request and calling the appropriate command
-	// handler.  This version is for compatibility with apps written for
-	// version 1.1,  and allocates the URL "tail" buffer internally.
+	// check for an incoming connection, and if it exists, process it by reading its request and calling the
+	// appropriate command handler.  This version is for compatibility with apps written for version 1.1,
+	// and allocates the URL "tail" buffer internally.
 	void loop();
 
-	// check for an incoming connection, and if it exists, process it
-	// by reading its request and calling the appropriate command
-	// handler.  This version saves the "tail" of the URL in buff.
-	void processConnection(char *buff, int *bufflen);
+	// check for an incoming connection, and if it exists, process it by reading its request and calling the
+	// appropriate command handler.  This version saves the "tail" of the URL in buff.
+	void processConnection( char *buff, int *bufflen );
 
 	// set command that's run when you access the root of the server
 	void setDefaultCommand(Command *cmd);
@@ -213,16 +241,14 @@ public:
 	// add a new command to be run at the URL specified by verb
 	void addCommand(const char *verb, Command *cmd);
 
-	// Set command that's run if default command or URL specified commands do
-	// not run, uses extra url_path parameter to allow resolving the URL in the
-	// function.
+	// Set command that's run if default command or URL specified commands do not run, 
+	// uses extra url_path parameter to allow resolving the URL in the function.
 	void setUrlPathCommand(UrlPathCommand *cmd);
 
 	// utility function to output CRLF pair
 	void printCRLF();
 
-	// output a string stored in program memory, usually one defined
-	// with the P macro
+	// output a string stored in program memory, usually one defined with the P macro
 	void printP(const unsigned char *str);
 
 	// inline overload for printP to handle signed char strings
@@ -243,18 +269,15 @@ public:
 	// put a character that's been read back into the input pool
 	void push(int ch);
 
-	// returns true if the string is next in the stream.  Doesn't
-	// consume any character if false, so can be used to try out
-	// different expected values.
+	// returns true if the string is next in the stream.  Doesn't consume any character if false,
+	// so can be used to try out different expected values.
 	bool expect(const char *expectedStr);
 
-	// returns true if a number, with possible whitespace in front, was
-	// read from the server stream.  number will be set with the new
-	// value or 0 if nothing was read.
+	// returns true if a number, with possible whitespace in front, was read from the server stream.
+	// number will be set with the new value or 0 if nothing was read.
 	bool readInt(int &number);
 
-	// reads a header value, stripped of possible whitespace in front,
-	// from the server stream
+	// reads a header value, stripped of possible whitespace in front, from the server stream
 	void readHeader(char *value, int valueLen);
 
 	// Read the next keyword parameter from the socket.  Assumes that other
@@ -316,30 +339,23 @@ public:
 	void setFavicon( char *favicon, size_t flen);
 	void setPingTimeout( unsigned long interval,  unsigned long timeout );
 	int getSocketCount( char *protocol );
+	void ShowSockStatus();
 	
 private:
-
-#ifdef _fishino
-	FishinoServer m_server;
-	FishinoClient m_client;
-#else
-	EthernetServer m_server;
-	EthernetClient m_client;
-#endif
+	WS_SERVER m_server;
+	WS_CLIENT m_client;
 
     // websockets data
     WebSocket **m_connections;			// Pointer array of clients:
 	
-	uint8_t handleNewClients();
+	int handleNewClients();
 	void handleClientData();
 	void handlePing();
-	int getConnectionIndex();
+	int getConnectionIndex( WS_CLIENT client );
 	void deleteConnection( byte idx );	// delete an indexed connection
-	
 
     int m_maxConnections;
     byte m_connectionCount;
-	//
 	
 	char *m_favicon;
 	size_t m_favicon_len;
@@ -358,7 +374,7 @@ private:
 	char m_ws_upgrade[32];
 	char m_ws_host[32];
 	char m_ws_connection[32];
-	char m_ws_protocol[32];
+	char m_ws_protocol[16];
 	int m_ws_version;
 	char m_ws_key[32];
 
@@ -376,7 +392,7 @@ private:
 	uint8_t m_buffer[WEBDUINO_OUTPUT_BUFFER_SIZE];
 	uint8_t m_bufFill;
 
-	void getRequest(WebServer::ConnectionType &type, char *request, int *length);
+	WebServer::ConnectionType getRequest(char *request, int *length);
 	bool dispatchCommand(ConnectionType requestType, char *verb, bool tail_complete);
 	void processHeaders();
 	static void defaultFailCmd(WebServer &server, ConnectionType type, char *url_tail, bool tail_complete);
@@ -428,18 +444,12 @@ public:
 private:
     WS_CLIENT m_client;
 	int		m_index;
-	char* 	m_protocol;
-    enum State {DISCONNECTED, CONNECTED} state;
+	char 	m_protocol[16];
+    enum 	State {DISCONNECTED, CONNECTED} state;
 
-	char*	upgrade;
-	char*	host;
-	char*	connection;
-	char*	key;
-	int 	version;
-	
 	// here is stored the current timer in order to close the connection if no pong
 	// is received by any client upon a ping message.
-	unsigned long m_pong_timer_millis;
+	unsigned long m_pong_timer_millis = 0.0;
 	
     // Discovers if the client's header is requesting an upgrade to a
     // websocket connection.
@@ -449,6 +459,5 @@ private:
     // or unhandled frame is received. Server must then disconnect, or an error occurs.
     bool getFrame();
 };
-
 
 #endif // SOCKWEBSERVER_H_
