@@ -17,3 +17,4 @@ you need to include these libs in your libraries directory:
 	for those arduino cards like fishino serie that drop connections on inactivity timeout.
 
 26-01-2017: bug fixes.
+25-07-2018: more bug fixes.
